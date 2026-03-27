@@ -44,32 +44,32 @@ There are three ways to expose tools through the MCP server. This app demonstrat
 
 ```
                         MCP Server (:8080/mcp)
-                                │
-          ┌─────────────────────┼──────────────────────┐
-          │                     │                      │
+                                |
+          +---------------------+----------------------+
+          |                     |                      |
     1. Static Tools      2. Dynamic Tools         3. Dynamic Tools
     (@Tool in code)      (from sources)           (from sources)
-          │                     │                      │
+          |                     |                      |
     Auto-discovered      ToolDefinitionSource    ToolDefinitionSource
     by the library       beans load records      beans load records
-          │                     │                      │
+          |                     |                      |
     Executed directly    Each record has          Each record has
-    in Java              executorType ──┐         executorType ──┐
-                                        │                        │
-                         ┌──────────────┘         ┌──────────────┘
-                         │                        │
+    in Java              executorType --+         executorType --+
+                                       |                        |
+                         +-------------+         +--------------+
+                         |                       |
                   ToolExecutionStrategy    ToolExecutionStrategy
                   bean matched by type     bean matched by type
-                         │                        │
+                         |                       |
                   executorConfig tells     executorConfig tells
                   the strategy HOW         the strategy HOW
 ```
 
 **The three pieces for dynamic tools:**
 
-1. **Source** (`ToolDefinitionSource`) — where tool definitions come from. Multiple sources can coexist. Each is a `@Component` bean.
-2. **Record** (`DynamicToolRecord`) — what a source returns: `name`, `description`, `inputSchema` (exposed to MCP clients) + `executorType`, `executorConfig` (server-side routing).
-3. **Strategy** (`ToolExecutionStrategy`) — how a tool executes when called. Matched by `executorType`. Receives the MCP client's input + the record's `executorConfig`.
+1. **Source** (`ToolDefinitionSource`) -- where tool definitions come from. Multiple sources can coexist. Each is a `@Component` bean. The client owns all source implementations.
+2. **Record** (`DynamicToolRecord`) -- what a source returns: `name`, `description`, `inputSchema` (exposed to MCP clients) + `executorType`, `executorConfig` (server-side routing).
+3. **Strategy** (`ToolExecutionStrategy`) -- how a tool executes when called. Matched by `executorType`. Receives the MCP client's input + the record's `executorConfig`.
 
 ## 1. Static Tools (code-defined)
 
@@ -112,27 +112,38 @@ public class WikipediaTodayTools {
 }
 ```
 
-No `executorType`, no `executorConfig`, no strategy — the tool owns its own execution.
+No `executorType`, no `executorConfig`, no strategy -- the tool owns its own execution.
 
 ## 2. Tool Definition Sources
 
-Sources tell the library where to find dynamic tool definitions. This app has two sources running side by side — each is an independent `@Component` that implements `ToolDefinitionSource`.
+Sources tell the library where to find dynamic tool definitions. This app has three sources running side by side -- each is an independent `@Component` that implements `ToolDefinitionSource`.
 
 ```
 mcp/source/
-├── JdbcToolDefinitionSource.java       # Loads from PostgreSQL
-└── InMemoryToolDefinitionSource.java   # Loads from a hardcoded list
+├── InMemoryToolDefinitionSource.java        # Loads from a hardcoded list
+├── JdbcToolDefinitionSource.java            # Loads from PostgreSQL via primary-jdbcTemplate
+└── SecondaryJdbcToolDefinitionSource.java   # Loads from PostgreSQL via secondary-jdbcTemplate
 ```
 
 The library's `DefaultDynamicToolLoader` collects all `ToolDefinitionSource` beans and calls each one at startup. If one fails, the others still load. On refresh, each source is polled independently.
 
 ### JdbcToolDefinitionSource
 
-Loads tools from a two-table schema (`tool_definitions` + `tool_registry`) with per-server assignment:
+Loads tools from a two-table schema (`tool_definitions` + `tool_registry`) with per-server assignment. Injects the library's named JdbcTemplate via `@Qualifier("primary-jdbcTemplate")`:
 
 ```java
 @Component
 public class JdbcToolDefinitionSource implements ToolDefinitionSource {
+
+    private final JdbcTemplate jdbcTemplate;
+    private final String serverId;
+
+    public JdbcToolDefinitionSource(
+            @Qualifier("primary-jdbcTemplate") JdbcTemplate jdbcTemplate,
+            @Value("${spring.ai.mcp.server.name}") String serverId) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.serverId = serverId;
+    }
 
     @Override
     public List<DynamicToolRecord> loadAll() {
@@ -160,9 +171,37 @@ public class JdbcToolDefinitionSource implements ToolDefinitionSource {
 }
 ```
 
+### SecondaryJdbcToolDefinitionSource
+
+Loads tools from the "secondary" datasource via `@Qualifier("secondary-jdbcTemplate")`. Demonstrates a second JDBC-backed source using its own named JdbcTemplate -- both sources coexist and load independently:
+
+```java
+@Component
+public class SecondaryJdbcToolDefinitionSource implements ToolDefinitionSource {
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public SecondaryJdbcToolDefinitionSource(
+            @Qualifier("secondary-jdbcTemplate") JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Override
+    public List<DynamicToolRecord> loadAll() {
+        return jdbcTemplate.query("""
+                SELECT tool_name, tool_description, input_schema,
+                       executor_type, executor_config
+                FROM tool_definitions
+                WHERE id = 4
+                """,
+                (rs, rowNum) -> new DynamicToolRecord( ... ));
+    }
+}
+```
+
 ### InMemoryToolDefinitionSource
 
-Loads tools from a hardcoded list. Demonstrates that sources don't need a database — they can come from anywhere (REST API, config file, service registry, etc.):
+Loads tools from a hardcoded list. Demonstrates that sources don't need a database -- they can come from anywhere (REST API, config file, service registry, etc.):
 
 ```java
 @Component
@@ -177,43 +216,69 @@ public class InMemoryToolDefinitionSource implements ToolDefinitionSource {
                         "{\"type\":\"object\",\"properties\":{}}",
                         "echo",
                         "{\"message\":\"MCP Host App v1.0.0\"}"
+                ),
+                new DynamicToolRecord(
+                        "random_number",
+                        "Generate a random number between a min and max value",
+                        "...",
+                        "echo",
+                        "{\"note\":\"This is a demo\"}"
                 )
         );
     }
 
-    // loadSince not overridden — defaults to returning empty list
+    // loadSince not overridden -- defaults to returning empty list
 }
 ```
 
 ### Configuration
 
-The `application.yml` only needs JDBC connection info (for the JDBC source) and refresh config:
+The library registers named `DataSource` and `JdbcTemplate` beans from YAML. The client's JDBC sources inject these by qualifier. No `ToolDefinitionSource` beans are created from YAML -- the client owns all source implementations.
 
 ```yaml
-dynamic-tools:
-  jdbc:
-    datasource:
-      url: ${DYNAMIC_TOOLS_DB_URL:jdbc:postgresql://localhost:5432/mcp_tools}
-      username: ${DYNAMIC_TOOLS_DB_USERNAME:postgres}
-      password: ${DYNAMIC_TOOLS_DB_PASSWORD:postgres}
-      driver-class-name: org.postgresql.Driver
+spring-pluggable-mcp:
+  datasources:
+    - name: primary
+      url: ${PRIMARY_DB_URL:jdbc:postgresql://localhost:5432/mcp_tools}
+      username: ${PRIMARY_DB_USERNAME:postgres}
+      password: ${PRIMARY_DB_PASSWORD:postgres}
+      driver-class-name: ${PRIMARY_DB_DRIVER:org.postgresql.Driver}
+    - name: secondary
+      url: ${SECONDARY_DB_URL:jdbc:postgresql://localhost:5432/mcp_tools}
+      username: ${SECONDARY_DB_USERNAME:postgres}
+      password: ${SECONDARY_DB_PASSWORD:postgres}
+      driver-class-name: ${SECONDARY_DB_DRIVER:org.postgresql.Driver}
   refresh:
     enabled: true
     interval: 5m
+```
+
+This creates four beans: `primary-dataSource`, `primary-jdbcTemplate`, `secondary-dataSource`, `secondary-jdbcTemplate`.
+
+### Application Bootstrap
+
+`DataSourceAutoConfiguration` is excluded since the library manages named datasources via `DynamicToolJdbcConfig`:
+
+```java
+@SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
+@EnableScheduling
+@ComponentScan(basePackages = {"com.mcp.mcphostapp", "com.mcp.springpluggablemcp"})
+public class McpHostAppApplication { }
 ```
 
 ## 3. Execution Strategies
 
 When a dynamic tool is called, the library looks up the `ToolExecutionStrategy` bean whose `getType()` matches the record's `executorType`, then calls `execute(toolInput, executorConfig)`.
 
-- **`toolInput`** — JSON string with the arguments the MCP client sent at runtime
-- **`executorConfig`** — JSON string from the tool definition, set at registration time
+- **`toolInput`** -- JSON string with the arguments the MCP client sent at runtime
+- **`executorConfig`** -- JSON string from the tool definition, set at registration time
 
 ```
 mcp/execution/
 ├── EchoStrategy.java           # type: "echo"
 ├── HttpStrategy.java           # type: "http"
-└── IdaasHttpStrategy.java      # type: "http_idaas"
+├── IdaasHttpStrategy.java      # type: "http_idaas"
+└── ToolExecutionUtils.java     # Shared: placeholders, body templates, error JSON
 ```
 
 This app demonstrates three execution patterns:
@@ -243,7 +308,7 @@ A tool using this:
 | `executor_type` | `echo` |
 | `executor_config` | `{"prefix": "[McpHostApp]"}` |
 
-The strategy receives both and decides what to do. The `executorConfig` is optional context — some strategies ignore it entirely.
+The strategy receives both and decides what to do. The `executorConfig` is optional context -- some strategies ignore it entirely.
 
 ### Pattern B: Generic HTTP Execution
 
@@ -273,7 +338,7 @@ Tools using this strategy with different configs:
 | `create_pastebin` | `{"url":"https://jsonplaceholder.typicode.com/posts","method":"POST","bodyTemplate":{"title":"{title}"}}` |
 | `get_random_activity` | `{"url":"https://bored-api.appbrewery.com/random","method":"GET"}` |
 
-Same strategy, different behavior — driven by config, not code.
+Same strategy, different behavior -- driven by config, not code.
 
 ### Pattern C: Pre-configured HTTP Client
 
@@ -335,7 +400,7 @@ The difference from Pattern B: the strategy owns the connection setup (auth, bas
 | `server_info` | `echo` | Server information |
 | `random_number` | `echo` | Random number (demo) |
 
-### Dynamic from JdbcToolDefinitionSource (8 tools)
+### Dynamic from JdbcToolDefinitionSource (8 tools, via primary-jdbcTemplate)
 
 | Tool | Executor | Description |
 |---|---|---|
@@ -348,11 +413,41 @@ The difference from Pattern B: the strategy owns the connection setup (auth, bas
 | `idaas_get_user` | `http_idaas` | IDaaS user fetch |
 | `idaas_create_post` | `http_idaas` | IDaaS post creation |
 
+### Dynamic from SecondaryJdbcToolDefinitionSource (1 tool, via secondary-jdbcTemplate)
+
+| Tool | Executor | Description |
+|---|---|---|
+| `unrelated_tool` | `echo` | Loaded from secondary source (tool_definitions id=4) |
+
+## Overriding Library Defaults
+
+The library ships default MCP server identity in its `application.yml`. This app overrides it:
+
+```yaml
+spring:
+  ai:
+    mcp:
+      server:
+        name: mcp-host-app        # overrides library's "spring-pluggable-mcp"
+        version: 1.0.0
+```
+
+## Shared Strategy Utilities
+
+The `HttpStrategy` and `IdaasHttpStrategy` share common logic via `ToolExecutionUtils`:
+
+- `resolvePlaceholders(template, input)` -- replaces `{key}` tokens in URLs and paths
+- `resolveBodyTemplate(config, input)` -- builds request bodies from templates
+- `parseBodySafe(body, mapper)` -- parses JSON responses with fallback to raw string
+- `errorJson(exception, mapper)` -- produces safe JSON error responses using Jackson (no hand-built strings)
+
+Strategies that make HTTP calls should use these utilities to avoid duplicating placeholder resolution and error formatting.
+
 ## Project Structure
 
 ```
 src/main/java/com/mcp/mcphostapp/
-├── McpHostAppApplication.java
+├── McpHostAppApplication.java              # Excludes DataSourceAutoConfiguration
 ├── controller/
 │   └── HealthController.java
 ├── service/
@@ -364,10 +459,12 @@ src/main/java/com/mcp/mcphostapp/
     ├── execution/                          # ToolExecutionStrategy beans
     │   ├── EchoStrategy.java               #   Pattern A: local execution
     │   ├── HttpStrategy.java               #   Pattern B: generic HTTP
-    │   └── IdaasHttpStrategy.java          #   Pattern C: pre-configured client
-    ├── source/                             # ToolDefinitionSource beans
-    │   ├── JdbcToolDefinitionSource.java   #   Loads from PostgreSQL
-    │   └── InMemoryToolDefinitionSource.java   #   Loads from hardcoded list
+    │   ├── IdaasHttpStrategy.java          #   Pattern C: pre-configured client
+    │   └── ToolExecutionUtils.java         #   Shared: placeholders, body templates, error JSON
+    ├── source/                             # ToolDefinitionSource beans (client-owned)
+    │   ├── InMemoryToolDefinitionSource.java           # Loads from hardcoded list
+    │   ├── JdbcToolDefinitionSource.java               # Loads from PostgreSQL (primary-jdbcTemplate)
+    │   └── SecondaryJdbcToolDefinitionSource.java      # Loads from PostgreSQL (secondary-jdbcTemplate)
     └── tools/                              # Static @Tool beans
         ├── HostTools.java
         ├── TextTools.java

@@ -1,65 +1,94 @@
 package com.mcp.springpluggablemcp.dynamic.config;
 
-import com.mcp.springpluggablemcp.dynamic.loader.SimpleQueryToolSource;
-import com.mcp.springpluggablemcp.dynamic.loader.ToolDefinitionSource;
-import com.mcp.springpluggablemcp.dynamic.mapping.DefaultToolRecordMapper;
-import com.mcp.springpluggablemcp.dynamic.mapping.ToolRecordMapper;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
+import org.springframework.beans.factory.support.RootBeanDefinition;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.jdbc.DataSourceBuilder;
-import org.springframework.context.annotation.Bean;
+import org.springframework.context.EnvironmentAware;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Lazy;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
-import java.sql.ResultSet;
 
 /**
- * JDBC-specific configuration — only activates when no custom
- * {@link ToolDefinitionSource} bean is provided. Supplies the default
- * DataSource, JdbcTemplate, mapper, and query-based source.
+ * Dynamically registers a named {@code DataSource} and {@code JdbcTemplate}
+ * bean for each entry in {@code spring-pluggable-mcp.datasources}.
+ * <p>
+ * Bean names follow the pattern {@code {name}-dataSource} and
+ * {@code {name}-jdbcTemplate}. Clients inject them by qualifier:
+ * <pre>
+ * &#64;Qualifier("primary-jdbcTemplate") JdbcTemplate jdbcTemplate
+ * </pre>
  */
 @Configuration
-@EnableConfigurationProperties(DynamicToolJdbcProperties.class)
-public class DynamicToolJdbcConfig {
+public class DynamicToolJdbcConfig implements BeanDefinitionRegistryPostProcessor, EnvironmentAware {
 
-    @Bean
-    @Lazy
-    @ConditionalOnMissingBean(name = "dynamicToolsDataSource")
-    @Qualifier("dynamicToolsDataSource")
-    public DataSource dynamicToolsDataSource(DynamicToolJdbcProperties properties) {
-        var ds = properties.datasource();
-        return DataSourceBuilder.create()
-                .url(ds.url())
-                .username(ds.username())
-                .password(ds.password())
-                .driverClassName(ds.driverClassName())
-                .build();
+    private static final Logger log = LoggerFactory.getLogger(DynamicToolJdbcConfig.class);
+
+    private Environment environment;
+
+    @Override
+    public void setEnvironment(Environment environment) {
+        this.environment = environment;
     }
 
-    @Bean
-    @Lazy
-    @ConditionalOnMissingBean(name = "dynamicToolsJdbcTemplate")
-    @Qualifier("dynamicToolsJdbcTemplate")
-    public JdbcTemplate dynamicToolsJdbcTemplate(
-            @Qualifier("dynamicToolsDataSource") DataSource dynamicToolsDataSource) {
-        return new JdbcTemplate(dynamicToolsDataSource);
+    @Override
+    public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) throws BeansException {
+        var props = Binder.get(environment)
+                .bind("spring-pluggable-mcp", DynamicToolProperties.class)
+                .orElse(null);
+
+        if (props == null || props.datasources() == null || props.datasources().isEmpty()) {
+            return;
+        }
+
+        for (var ds : props.datasources()) {
+            String name = ds.name();
+            if (name == null || name.isBlank()) {
+                log.warn("Skipping datasource entry with missing 'name' field");
+                continue;
+            }
+
+            if (ds.url() == null) {
+                log.warn("[{}] Skipping datasource — url is required", name);
+                continue;
+            }
+
+            // DataSource bean
+            var dsBd = new RootBeanDefinition();
+            dsBd.setBeanClass(DataSource.class);
+            dsBd.setLazyInit(true);
+            dsBd.setInstanceSupplier(() -> DataSourceBuilder.create()
+                    .url(ds.url())
+                    .username(ds.username())
+                    .password(ds.password())
+                    .driverClassName(ds.driverClassName())
+                    .build());
+            registry.registerBeanDefinition(name + "-dataSource", dsBd);
+
+            // JdbcTemplate bean
+            var jtBd = new RootBeanDefinition();
+            jtBd.setBeanClass(JdbcTemplate.class);
+            jtBd.setLazyInit(true);
+            String dsRef = name + "-dataSource";
+            jtBd.setInstanceSupplier(() -> {
+                var bf = (ConfigurableListableBeanFactory) registry;
+                return new JdbcTemplate(bf.getBean(dsRef, DataSource.class));
+            });
+            registry.registerBeanDefinition(name + "-jdbcTemplate", jtBd);
+
+            log.info("[{}] Registered JDBC beans: {}-dataSource, {}-jdbcTemplate", name, name, name);
+        }
     }
 
-    @Bean
-    @ConditionalOnMissingBean(ToolRecordMapper.class)
-    public ToolRecordMapper<ResultSet> defaultToolRecordMapper(DynamicToolJdbcProperties properties) {
-        return new DefaultToolRecordMapper(properties.columnMapping());
-    }
-
-    @Bean
-    @ConditionalOnMissingBean(ToolDefinitionSource.class)
-    public ToolDefinitionSource simpleQueryToolSource(
-            @Qualifier("dynamicToolsJdbcTemplate") JdbcTemplate jdbcTemplate,
-            DynamicToolJdbcProperties properties,
-            ToolRecordMapper<ResultSet> mapper) {
-        return new SimpleQueryToolSource(jdbcTemplate, properties, mapper);
+    @Override
+    public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
+        // no-op
     }
 }

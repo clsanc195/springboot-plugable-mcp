@@ -12,7 +12,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.Iterator;
 import java.util.Map;
 
 @Component
@@ -41,7 +40,7 @@ public class HttpStrategy implements ToolExecutionStrategy {
             JsonNode config = objectMapper.readTree(executorConfig);
             JsonNode input = objectMapper.readTree(toolInput);
 
-            String url = resolveUrl(config, input);
+            String url = ToolExecutionUtils.resolvePlaceholders(config.get("url").asText(), input);
             String method = config.has("method") ? config.get("method").asText() : "GET";
             Duration timeout = config.has("timeoutSeconds")
                     ? Duration.ofSeconds(config.get("timeoutSeconds").asLong())
@@ -56,13 +55,15 @@ public class HttpStrategy implements ToolExecutionStrategy {
                         requestBuilder.header(entry.getKey(), entry.getValue().asText()));
             }
 
-            String body = resolveBody(config, input, method);
+            boolean hasBody = !"GET".equalsIgnoreCase(method) && !"DELETE".equalsIgnoreCase(method);
+            String body = hasBody ? ToolExecutionUtils.resolveBodyTemplate(config, input) : null;
+
             requestBuilder.method(method.toUpperCase(), body != null
                     ? HttpRequest.BodyPublishers.ofString(body)
                     : HttpRequest.BodyPublishers.noBody());
 
-            if (body != null && !config.has("headers")
-                    || (config.has("headers") && !config.get("headers").has("Content-Type"))) {
+            if (body != null && (!config.has("headers")
+                    || !config.get("headers").has("Content-Type"))) {
                 requestBuilder.header("Content-Type", "application/json");
             }
 
@@ -72,47 +73,12 @@ public class HttpStrategy implements ToolExecutionStrategy {
 
             return objectMapper.writeValueAsString(Map.of(
                     "status", response.statusCode(),
-                    "body", parseBodySafe(response.body())
+                    "body", ToolExecutionUtils.parseBodySafe(response.body(), objectMapper)
             ));
 
         } catch (Exception e) {
             log.error("HTTP strategy execution failed: {}", e.getMessage());
-            return "{\"error\": \"" + e.getMessage().replace("\"", "\\\"") + "\"}";
-        }
-    }
-
-    private String resolveUrl(JsonNode config, JsonNode input) {
-        String url = config.get("url").asText();
-        Iterator<Map.Entry<String, JsonNode>> fields = input.fields();
-        while (fields.hasNext()) {
-            Map.Entry<String, JsonNode> field = fields.next();
-            url = url.replace("{" + field.getKey() + "}", field.getValue().asText());
-        }
-        return url;
-    }
-
-    private String resolveBody(JsonNode config, JsonNode input, String method) {
-        if ("GET".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method)) {
-            return null;
-        }
-        if (config.has("bodyTemplate")) {
-            String template = config.get("bodyTemplate").toString();
-            Iterator<Map.Entry<String, JsonNode>> fields = input.fields();
-            while (fields.hasNext()) {
-                Map.Entry<String, JsonNode> field = fields.next();
-                template = template.replace("\"{" + field.getKey() + "}\"", field.getValue().toString());
-                template = template.replace("{" + field.getKey() + "}", field.getValue().asText());
-            }
-            return template;
-        }
-        return input.toString();
-    }
-
-    private Object parseBodySafe(String body) {
-        try {
-            return objectMapper.readTree(body);
-        } catch (Exception e) {
-            return body;
+            return ToolExecutionUtils.errorJson(e, objectMapper);
         }
     }
 }

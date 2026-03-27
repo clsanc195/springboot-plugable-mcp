@@ -14,8 +14,11 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Loads dynamic tool definitions from a PostgreSQL database using a
- * two-table schema (tool_definitions + tool_registry) that supports
+ * Custom tool source that uses the "primary" JDBC source configured in YAML.
+ * Demonstrates how a client can inject a named JdbcTemplate from the
+ * library's multi-source JDBC config and write its own query logic.
+ * <p>
+ * Uses a two-table schema (tool_definitions + tool_registry) with
  * per-server tool assignment.
  */
 @Component
@@ -27,7 +30,7 @@ public class JdbcToolDefinitionSource implements ToolDefinitionSource {
     private final String serverId;
 
     public JdbcToolDefinitionSource(
-            @Qualifier("dynamicToolsJdbcTemplate") JdbcTemplate jdbcTemplate,
+            @Qualifier("primary-jdbcTemplate") JdbcTemplate jdbcTemplate,
             @Value("${spring.ai.mcp.server.name}") String serverId) {
         this.jdbcTemplate = jdbcTemplate;
         this.serverId = serverId;

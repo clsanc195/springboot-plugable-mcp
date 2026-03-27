@@ -1,5 +1,7 @@
 package com.mcp.springpluggablemcp.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -13,6 +15,8 @@ import java.util.List;
 
 @Configuration
 public class McpToolConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(McpToolConfig.class);
 
     @Bean
     @ConditionalOnMissingBean(MethodToolCallbackProvider.class)
@@ -40,7 +44,11 @@ public class McpToolConfig {
                 return Class.forName(className);
             }
             return null;
+        } catch (ClassNotFoundException e) {
+            log.warn("Could not resolve class for bean '{}': {}", beanName, e.getMessage());
+            return null;
         } catch (Exception e) {
+            log.debug("Skipping bean '{}' during @Tool scan: {}", beanName, e.getMessage());
             return null;
         }
     }

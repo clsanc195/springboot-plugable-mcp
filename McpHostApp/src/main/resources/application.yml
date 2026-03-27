@@ -14,13 +14,24 @@ spring:
         streamable-http:
           mcp-endpoint: /mcp
 
-dynamic-tools:
-  jdbc:
-    datasource:
-      url: ${DYNAMIC_TOOLS_DB_URL:jdbc:postgresql://localhost:5432/mcp_tools}
-      username: ${DYNAMIC_TOOLS_DB_USERNAME:postgres}
-      password: ${DYNAMIC_TOOLS_DB_PASSWORD:postgres}
-      driver-class-name: ${DYNAMIC_TOOLS_DB_DRIVER:org.postgresql.Driver}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,mcptools
+
+spring-pluggable-mcp:
+  datasources:
+    - name: primary
+      url: ${PRIMARY_DB_URL:jdbc:postgresql://localhost:5432/mcp_tools}
+      username: ${PRIMARY_DB_USERNAME:postgres}
+      password: ${PRIMARY_DB_PASSWORD:postgres}
+      driver-class-name: ${PRIMARY_DB_DRIVER:org.postgresql.Driver}
+    - name: secondary
+      url: ${SECONDARY_DB_URL:jdbc:postgresql://localhost:5432/mcp_tools}
+      username: ${SECONDARY_DB_USERNAME:postgres}
+      password: ${SECONDARY_DB_PASSWORD:postgres}
+      driver-class-name: ${SECONDARY_DB_DRIVER:org.postgresql.Driver}
   refresh:
     enabled: true
     interval: 5m

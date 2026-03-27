@@ -10,8 +10,11 @@ This is a **library**, not a standalone application. You add it as a dependency 
 
 - An MCP server endpoint at `/mcp` (Streamable HTTP)
 - Auto-discovery of `@Tool`-annotated beans from your application
-- A pluggable system for loading and executing dynamic tools from a database or any other source
+- A pluggable system for loading and executing dynamic tools from any source
+- Named JDBC datasource/JdbcTemplate bean registration from YAML configuration
 - Every extension point follows the same pattern: **interface + default implementation + `@ConditionalOnMissingBean`**
+
+The library does **not** provide any `ToolDefinitionSource` implementations. Clients own all source implementations and inject the named JDBC beans they need.
 
 ## Adding the Dependency
 
@@ -35,10 +38,12 @@ Your application also needs:
 And a component scan that includes the library's package:
 
 ```java
-@SpringBootApplication
+@SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
 @ComponentScan(basePackages = {"your.app.package", "com.mcp.springpluggablemcp"})
 public class YourApplication { }
 ```
+
+Note: exclude `DataSourceAutoConfiguration` since the library manages its own named datasources via `DynamicToolJdbcConfig`.
 
 ## Extension Points
 
@@ -46,10 +51,9 @@ Every component is replaceable. The library provides sensible defaults, but your
 
 | Extension Point | Interface | Default | What It Does |
 |---|---|---|---|
-| Tool loading source | `ToolDefinitionSource` | `SimpleQueryToolSource` | Where dynamic tool definitions come from |
-| Row-to-record mapping | `ToolRecordMapper<T>` | `DefaultToolRecordMapper` (JDBC) | How raw source data maps to `DynamicToolRecord` |
+| Tool loading source | `ToolDefinitionSource` | *(client provides these)* | Where dynamic tool definitions come from |
 | Strategy resolution | `ToolExecutionStrategyRegistry` | `DefaultToolExecutionStrategyRegistry` | How `executorType` maps to a strategy bean |
-| Tool execution | `ToolExecutionStrategy` | *(you provide these)* | What happens when a tool is called |
+| Tool execution | `ToolExecutionStrategy` | *(client provides these)* | What happens when a tool is called |
 | Loading lifecycle | `DynamicToolLoader` | `DefaultDynamicToolLoader` | When and how tools are loaded and refreshed |
 | Static tool discovery | `MethodToolCallbackProvider` | Auto-scans all `@Tool` beans | Which `@Tool` methods become MCP tools |
 
@@ -81,35 +85,111 @@ Dynamic tools are defined outside your code (typically in a database) and loaded
 ### Configuration (Core)
 
 ```yaml
-dynamic-tools:
+spring-pluggable-mcp:
   refresh:
     enabled: false       # set true to poll for changes
     interval: 5m         # polling interval
 ```
 
-These are the only properties the library requires. Everything else depends on which `ToolDefinitionSource` you use.
+These are the only properties the library requires for the core loader. Everything else depends on which sources you implement.
 
-### Configuration (JDBC Defaults)
+### Configuration (JDBC Named Sources)
 
-If you don't provide a custom `ToolDefinitionSource`, the library uses `SimpleQueryToolSource` which reads from a database:
+The library can register named `DataSource` and `JdbcTemplate` beans from YAML. Each entry in `spring-pluggable-mcp.datasources` becomes a pair of beans that clients inject by qualifier. The library does **not** create `ToolDefinitionSource` beans from this configuration — clients write their own source implementations.
 
 ```yaml
-dynamic-tools:
-  jdbc:
-    datasource:
+spring-pluggable-mcp:
+  datasources:
+    - name: primary
       url: jdbc:postgresql://localhost:5432/mcp_tools
       username: postgres
       password: postgres
       driver-class-name: org.postgresql.Driver
-    query: "SELECT name, description, schema, type, config FROM tools WHERE enabled = true"
-    column-mapping:
-      name: name
-      description: description
-      input-schema: schema
-      executor-type: type
-      executor-config: config
-    delta-query: "SELECT ... WHERE updated_at > ?"
+    - name: secondary
+      url: jdbc:postgresql://localhost:5433/other_db
+      username: postgres
+      password: postgres
+      driver-class-name: org.postgresql.Driver
 ```
+
+This registers the following beans:
+
+| Bean Name | Type | Injected Via |
+|---|---|---|
+| `primary-dataSource` | `DataSource` | `@Qualifier("primary-dataSource")` |
+| `primary-jdbcTemplate` | `JdbcTemplate` | `@Qualifier("primary-jdbcTemplate")` |
+| `secondary-dataSource` | `DataSource` | `@Qualifier("secondary-dataSource")` |
+| `secondary-jdbcTemplate` | `JdbcTemplate` | `@Qualifier("secondary-jdbcTemplate")` |
+
+Client source example:
+
+```java
+@Component
+public class MyJdbcToolSource implements ToolDefinitionSource {
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public MyJdbcToolSource(@Qualifier("primary-jdbcTemplate") JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Override
+    public List<DynamicToolRecord> loadAll() {
+        return jdbcTemplate.query("SELECT ...",
+                (rs, rowNum) -> new DynamicToolRecord(
+                        rs.getString("tool_name"),
+                        rs.getString("tool_description"),
+                        rs.getString("input_schema"),
+                        rs.getString("executor_type"),
+                        rs.getString("executor_config")
+                ));
+    }
+}
+```
+
+## Overriding Library Defaults
+
+The library ships an `application.yml` with MCP server identity defaults (`name: spring-pluggable-mcp`). Your client application's `application.yml` takes precedence — simply define your own:
+
+```yaml
+spring:
+  ai:
+    mcp:
+      server:
+        name: my-mcp-server
+        version: 2.0.0
+```
+
+The library's values are only used if your application doesn't set them.
+
+## Multiple Tool Definition Sources
+
+The loader accepts `List<ToolDefinitionSource>` — all `@Component` beans implementing the interface are collected automatically. Each source loads independently and failures in one source don't affect others.
+
+```java
+@Component
+public class RestApiToolSource implements ToolDefinitionSource {
+    @Override
+    public List<DynamicToolRecord> loadAll() { /* fetch from API */ }
+}
+
+@Component
+public class FileToolSource implements ToolDefinitionSource {
+    @Override
+    public List<DynamicToolRecord> loadAll() { /* read from YAML file */ }
+}
+```
+
+Both sources contribute tools to the same MCP server. If a source fails at startup, it retries automatically on the next refresh cycle (up to 10 attempts with logging on each retry).
+
+## Resilience
+
+- **Source failures at startup** are logged and retried on the next refresh cycle
+- **Individual tool registration failures** are isolated — one bad tool doesn't block others
+- **Retry limit** — sources that fail repeatedly give up after 10 attempts to avoid log spam
+- **Tool name collisions** across sources are logged with a warning identifying both sources before overriding
+- **Thread safety** — tool registration uses a `ReentrantLock` to prevent race conditions during concurrent refresh and MCP request handling
+- **McpToolConfig logging** — bean resolution errors during `@Tool` scanning are logged as warnings instead of silently swallowed
 
 ## Showcase: CalculatorTools
 
@@ -133,6 +213,7 @@ public class CalculatorTools {
 
 ```
 src/main/java/com/mcp/springpluggablemcp/
+├── SpringPluggableMcpApplication.java
 ├── config/
 │   └── McpToolConfig.java                    # Auto-discovers @Tool beans
 ├── controller/
@@ -141,19 +222,15 @@ src/main/java/com/mcp/springpluggablemcp/
 │   └── CalculatorService.java                # Showcase service
 └── dynamic/
     ├── config/
-    │   ├── DynamicToolProperties.java        # Core properties (refresh)
-    │   ├── DynamicToolJdbcProperties.java    # JDBC-specific properties
+    │   ├── DynamicToolProperties.java        # Core properties (refresh + datasources)
     │   ├── DynamicToolDatasourceConfig.java  # Core beans (loader, registry)
-    │   └── DynamicToolJdbcConfig.java        # JDBC default beans
+    │   └── DynamicToolJdbcConfig.java        # Registers named DataSource/JdbcTemplate beans
     ├── loader/
     │   ├── DynamicToolLoader.java            # Interface
     │   ├── DefaultDynamicToolLoader.java     # Default: load on startup + refresh
-    │   ├── ToolDefinitionSource.java         # Interface
-    │   └── SimpleQueryToolSource.java        # Default: SQL query
+    │   └── ToolDefinitionSource.java         # Interface (client-implemented)
     ├── mapping/
-    │   ├── DynamicToolRecord.java            # Tool data model
-    │   ├── ToolRecordMapper.java             # Interface (generic)
-    │   └── DefaultToolRecordMapper.java      # Default: JDBC ResultSet
+    │   └── DynamicToolRecord.java            # Tool data model
     └── execution/
         ├── ToolExecutionStrategy.java        # Interface
         ├── ToolExecutionStrategyRegistry.java          # Interface

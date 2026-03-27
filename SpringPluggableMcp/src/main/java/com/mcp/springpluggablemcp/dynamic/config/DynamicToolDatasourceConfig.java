@@ -5,6 +5,7 @@ import com.mcp.springpluggablemcp.dynamic.execution.ToolExecutionStrategy;
 import com.mcp.springpluggablemcp.dynamic.execution.ToolExecutionStrategyRegistry;
 import com.mcp.springpluggablemcp.dynamic.loader.DefaultDynamicToolLoader;
 import com.mcp.springpluggablemcp.dynamic.loader.DynamicToolLoader;
+import com.mcp.springpluggablemcp.dynamic.loader.DynamicToolStatus;
 import com.mcp.springpluggablemcp.dynamic.loader.ToolDefinitionSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -32,13 +33,20 @@ public class DynamicToolDatasourceConfig {
     }
 
     @Bean
+    @ConditionalOnMissingBean(DynamicToolStatus.class)
+    public DynamicToolStatus dynamicToolStatus() {
+        return new DynamicToolStatus();
+    }
+
+    @Bean
     @ConditionalOnMissingBean(DynamicToolLoader.class)
     public DynamicToolLoader dynamicToolLoader(
             List<ToolDefinitionSource> sources,
             ToolExecutionStrategyRegistry strategyRegistry,
             McpSyncServer mcpSyncServer,
             DynamicToolProperties properties,
-            TaskScheduler taskScheduler) {
-        return new DefaultDynamicToolLoader(sources, strategyRegistry, mcpSyncServer, properties, taskScheduler);
+            TaskScheduler taskScheduler,
+            DynamicToolStatus status) {
+        return new DefaultDynamicToolLoader(sources, strategyRegistry, mcpSyncServer, properties, taskScheduler, status);
     }
 }

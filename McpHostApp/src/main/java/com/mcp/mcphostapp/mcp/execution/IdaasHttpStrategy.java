@@ -10,7 +10,6 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-import java.util.Iterator;
 import java.util.Map;
 
 @Component
@@ -44,7 +43,7 @@ public class IdaasHttpStrategy implements ToolExecutionStrategy {
             JsonNode config = objectMapper.readTree(executorConfig);
             JsonNode input = objectMapper.readTree(toolInput);
 
-            String path = resolvePlaceholders(config.get("path").asText(), input);
+            String path = ToolExecutionUtils.resolvePlaceholders(config.get("path").asText(), input);
             String method = config.has("method") ? config.get("method").asText() : "GET";
 
             log.info("IDaaS {} {}", method, path);
@@ -57,13 +56,13 @@ public class IdaasHttpStrategy implements ToolExecutionStrategy {
                 case "POST" -> restClient.post()
                         .uri(path)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .body(buildBody(config, input))
+                        .body(ToolExecutionUtils.resolveBodyTemplate(config, input))
                         .retrieve()
                         .body(String.class);
                 case "PUT" -> restClient.put()
                         .uri(path)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .body(buildBody(config, input))
+                        .body(ToolExecutionUtils.resolveBodyTemplate(config, input))
                         .retrieve()
                         .body(String.class);
                 case "DELETE" -> restClient.delete()
@@ -75,43 +74,12 @@ public class IdaasHttpStrategy implements ToolExecutionStrategy {
 
             return objectMapper.writeValueAsString(Map.of(
                     "source", "idaas",
-                    "data", parseBodySafe(responseBody)
+                    "data", ToolExecutionUtils.parseBodySafe(responseBody, objectMapper)
             ));
 
         } catch (Exception e) {
             log.error("IDaaS execution failed: {}", e.getMessage());
-            return "{\"error\": \"" + e.getMessage().replace("\"", "\\\"") + "\"}";
-        }
-    }
-
-    private String resolvePlaceholders(String template, JsonNode input) {
-        Iterator<Map.Entry<String, JsonNode>> fields = input.fields();
-        while (fields.hasNext()) {
-            Map.Entry<String, JsonNode> field = fields.next();
-            template = template.replace("{" + field.getKey() + "}", field.getValue().asText());
-        }
-        return template;
-    }
-
-    private String buildBody(JsonNode config, JsonNode input) throws Exception {
-        if (config.has("bodyTemplate")) {
-            String template = config.get("bodyTemplate").toString();
-            Iterator<Map.Entry<String, JsonNode>> fields = input.fields();
-            while (fields.hasNext()) {
-                Map.Entry<String, JsonNode> field = fields.next();
-                template = template.replace("\"{" + field.getKey() + "}\"", field.getValue().toString());
-                template = template.replace("{" + field.getKey() + "}", field.getValue().asText());
-            }
-            return template;
-        }
-        return input.toString();
-    }
-
-    private Object parseBodySafe(String body) {
-        try {
-            return objectMapper.readTree(body);
-        } catch (Exception e) {
-            return body;
+            return ToolExecutionUtils.errorJson(e, objectMapper);
         }
     }
 }

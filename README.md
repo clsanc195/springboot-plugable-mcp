@@ -57,18 +57,26 @@ Password: postgres
 | `ping` | Simple ping/pong |
 | `today_in_history` | Wikipedia "on this day" API |
 
-### Dynamic Tools (from database)
+### Dynamic Tools (from InMemoryToolDefinitionSource)
 
 | Tool | Executor | Description |
 |---|---|---|
-| `echo_message` | `echo` | Echo with prefix |
-| `lookup_user` | `echo` | User lookup |
-| `greet_user` | `echo` | Greeting generator |
-| `get_random_activity` | `http` | Bored API random activity |
-| `get_github_user` | `http` | GitHub user profile |
-| `create_pastebin` | `http` | JSONPlaceholder post creation |
-| `idaas_get_user` | `http_idaas` | IDaaS user fetch |
-| `idaas_create_post` | `http_idaas` | IDaaS post creation |
+| `server_info` | `echo` | Server information |
+| `random_number` | `echo` | Random number (demo) |
+
+### Dynamic Tools (from JdbcToolDefinitionSource / SecondaryJdbcToolDefinitionSource)
+
+| Tool | Executor | Source | Description |
+|---|---|---|---|
+| `echo_message` | `echo` | primary | Echo with prefix |
+| `lookup_user` | `echo` | primary | User lookup |
+| `greet_user` | `echo` | primary | Greeting generator |
+| `get_random_activity` | `http` | primary | Bored API random activity |
+| `get_github_user` | `http` | primary | GitHub user profile |
+| `create_pastebin` | `http` | primary | JSONPlaceholder post creation |
+| `idaas_get_user` | `http_idaas` | primary | IDaaS user fetch |
+| `idaas_create_post` | `http_idaas` | primary | IDaaS post creation |
+| `unrelated_tool` | `echo` | secondary | Loaded by secondary source (id=4) |
 
 ## Prerequisites
 
@@ -97,5 +105,5 @@ Requires a running PostgreSQL instance — use `docker compose up -d postgres` t
 │   └── init.sql                # Database schema and seed data
 ├── inspector-entrypoint.sh     # MCP Inspector startup patch
 ├── SpringPluggableMcp/         # Library — extension points and defaults
-└── McpHostApp/                 # Client — tools, strategies, custom loading
+└── McpHostApp/                 # Client — tools, strategies, sources
 ```

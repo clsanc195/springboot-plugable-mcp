@@ -26,10 +26,16 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DYNAMIC_TOOLS_DB_URL: jdbc:postgresql://postgres:5432/mcp_tools
-      DYNAMIC_TOOLS_DB_USERNAME: postgres
-      DYNAMIC_TOOLS_DB_PASSWORD: postgres
-      DYNAMIC_TOOLS_DB_DRIVER: org.postgresql.Driver
+      # Primary JDBC source
+      PRIMARY_DB_URL: jdbc:postgresql://postgres:5432/mcp_tools
+      PRIMARY_DB_USERNAME: postgres
+      PRIMARY_DB_PASSWORD: postgres
+      PRIMARY_DB_DRIVER: org.postgresql.Driver
+      # Secondary JDBC source (same DB for demo — would be a different DB in production)
+      SECONDARY_DB_URL: jdbc:postgresql://postgres:5432/mcp_tools
+      SECONDARY_DB_USERNAME: postgres
+      SECONDARY_DB_PASSWORD: postgres
+      SECONDARY_DB_DRIVER: org.postgresql.Driver
     depends_on:
       postgres:
         condition: service_healthy

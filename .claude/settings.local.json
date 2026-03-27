@@ -6,7 +6,8 @@
       "Bash(curl:*)",
       "Bash(docker exec:*)",
       "Bash(pkill -f \"mcp-inspector\")",
-      "Bash(pkill -f \"@modelcontextprotocol/inspector\")"
+      "Bash(pkill -f \"@modelcontextprotocol/inspector\")",
+      "Bash(find /Users/carlos/JavaProjects/McpHostApp/src/test/java -type f -name *.java)"
     ]
   }
 }

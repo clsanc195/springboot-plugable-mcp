@@ -3,15 +3,28 @@ package com.mcp.springpluggablemcp.dynamic.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
- * Core properties for dynamic tool loading. Only contains what every
- * implementation needs — the refresh schedule. Source-specific config
- * (JDBC, REST, file, etc.) lives in separate properties classes.
+ * Configuration properties for the SpringPluggableMcp library.
+ *
+ * <pre>
+ * spring-pluggable-mcp:
+ *   refresh:
+ *     enabled: true
+ *     interval: 5m
+ *   datasources:
+ *     - name: primary
+ *       url: jdbc:postgresql://localhost:5432/my_db
+ *       username: postgres
+ *       password: postgres
+ *       driver-class-name: org.postgresql.Driver
+ * </pre>
  */
-@ConfigurationProperties(prefix = "dynamic-tools")
+@ConfigurationProperties(prefix = "spring-pluggable-mcp")
 public record DynamicToolProperties(
-        Refresh refresh
+        Refresh refresh,
+        List<NamedDatasource> datasources
 ) {
 
     public record Refresh(
@@ -21,8 +34,16 @@ public record DynamicToolProperties(
         public Refresh {
             if (enabled && interval == null) {
                 throw new IllegalArgumentException(
-                        "dynamic-tools.refresh.interval is required when refresh is enabled");
+                        "spring-pluggable-mcp.refresh.interval is required when refresh is enabled");
             }
         }
     }
+
+    public record NamedDatasource(
+            String name,
+            String url,
+            String username,
+            String password,
+            String driverClassName
+    ) {}
 }

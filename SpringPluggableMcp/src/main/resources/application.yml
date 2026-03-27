@@ -9,6 +9,6 @@ spring:
         streamable-http:
           mcp-endpoint: /mcp
 
-dynamic-tools:
+spring-pluggable-mcp:
   refresh:
     enabled: false
