@@ -2,6 +2,7 @@ package com.mcp.springpluggablemcp.dynamic.loader;
 
 import com.mcp.springpluggablemcp.dynamic.mapping.DynamicToolRecord;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
@@ -30,5 +31,38 @@ public interface ToolDefinitionSource {
      */
     default List<DynamicToolRecord> loadSince(Instant since) {
         return List.of();
+    }
+
+    /**
+     * How often this source should be refreshed. Each source gets its
+     * own independent refresh schedule.
+     * <p>
+     * Return {@code null} to disable refresh for this source (load
+     * once at startup only). The default returns {@code null}.
+     */
+    default Duration refreshInterval() {
+        return null;
+    }
+
+    /**
+     * Maximum time to wait for {@link #loadAll()} or {@link #loadSince}
+     * to complete before cancelling the call. Protects the refresh thread
+     * from hanging sources.
+     * <p>
+     * The default is 30 seconds.
+     */
+    default Duration sourceTimeout() {
+        return Duration.ofSeconds(30);
+    }
+
+    /**
+     * How many times to retry the initial full load if it fails at startup.
+     * After this many consecutive failures the source is abandoned until
+     * the application restarts.
+     * <p>
+     * The default is 10.
+     */
+    default int maxRetryAttempts() {
+        return 10;
     }
 }

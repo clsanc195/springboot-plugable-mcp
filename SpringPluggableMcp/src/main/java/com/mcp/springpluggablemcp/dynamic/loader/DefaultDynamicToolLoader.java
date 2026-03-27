@@ -8,6 +8,7 @@ import io.modelcontextprotocol.server.McpSyncServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.mcp.McpToolUtils;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.TaskScheduler;
@@ -20,11 +21,9 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class DefaultDynamicToolLoader implements DynamicToolLoader {
+public class DefaultDynamicToolLoader implements DynamicToolLoader, DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultDynamicToolLoader.class);
-    private static final int MAX_RETRY_ATTEMPTS = 10;
-    private static final Duration SOURCE_TIMEOUT = Duration.ofSeconds(30);
 
     private final List<ToolDefinitionSource> sources;
     private final ToolExecutionStrategyRegistry strategyRegistry;
@@ -58,12 +57,28 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader {
     public void onStartup() {
         for (ToolDefinitionSource source : sources) {
             loadAllFromSource(source);
+            scheduleRefresh(source);
+        }
+    }
+
+    @Override
+    public void destroy() {
+        sourceExecutor.shutdownNow();
+        log.info("Dynamic tool loader shut down");
+    }
+
+    private void scheduleRefresh(ToolDefinitionSource source) {
+        String sourceName = source.getClass().getSimpleName();
+
+        Duration interval = source.refreshInterval();
+
+        if (interval == null && properties.refresh() != null && properties.refresh().enabled()) {
+            interval = properties.refresh().interval();
         }
 
-        if (properties.refresh() != null && properties.refresh().enabled()) {
-            var interval = properties.refresh().interval();
-            taskScheduler.scheduleWithFixedDelay(this::refreshTools, interval);
-            log.info("Dynamic tool refresh enabled, polling every {}", interval);
+        if (interval != null) {
+            taskScheduler.scheduleWithFixedDelay(() -> refreshFromSource(source), interval);
+            log.info("[{}] Refresh scheduled every {}", sourceName, interval);
         }
     }
 
@@ -71,7 +86,7 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader {
         String sourceName = source.getClass().getSimpleName();
         try {
             lastReadTimes.put(sourceName, Instant.now());
-            var records = callWithTimeout(() -> source.loadAll(), sourceName, "loadAll");
+            var records = callWithTimeout(() -> source.loadAll(), source);
             if (records == null) return;
             log.info("[{}] Loaded {} dynamic tool definitions", sourceName, records.size());
             int registered = 0;
@@ -86,21 +101,16 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader {
         }
     }
 
-    private void refreshTools() {
-        for (ToolDefinitionSource source : sources) {
-            refreshFromSource(source);
-        }
-    }
-
     private void refreshFromSource(ToolDefinitionSource source) {
         String sourceName = source.getClass().getSimpleName();
+        int maxRetries = source.maxRetryAttempts();
         try {
             if (!retryCounters.containsKey(sourceName) && lastReadTimes.containsKey(sourceName)
                     && toolOwnership.containsValue(sourceName)) {
                 var since = lastReadTimes.getOrDefault(sourceName, Instant.now());
                 lastReadTimes.put(sourceName, Instant.now());
 
-                var deltas = callWithTimeout(() -> source.loadSince(since), sourceName, "loadSince");
+                var deltas = callWithTimeout(() -> source.loadSince(since), source);
                 if (deltas == null || deltas.isEmpty()) {
                     log.debug("[{}] No new tool definitions since {}", sourceName, since);
                     return;
@@ -114,15 +124,15 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader {
                 AtomicInteger counter = retryCounters.computeIfAbsent(sourceName, k -> new AtomicInteger(0));
                 int attempt = counter.incrementAndGet();
 
-                if (attempt > MAX_RETRY_ATTEMPTS) {
+                if (attempt > maxRetries) {
                     log.error("[{}] Giving up after {} failed attempts. Source will not be retried until restart.",
-                            sourceName, MAX_RETRY_ATTEMPTS);
-                    status.sourceGaveUp(sourceName, MAX_RETRY_ATTEMPTS);
+                            sourceName, maxRetries);
+                    status.sourceGaveUp(sourceName, maxRetries);
                     return;
                 }
 
                 log.info("[{}] Retrying initial full load (attempt {}/{})...",
-                        sourceName, attempt, MAX_RETRY_ATTEMPTS);
+                        sourceName, attempt, maxRetries);
                 status.sourceRetrying(sourceName, attempt);
                 loadAllFromSource(source);
             }
@@ -131,19 +141,21 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader {
         }
     }
 
-    private <T> T callWithTimeout(Callable<T> task, String sourceName, String operation) {
+    private <T> T callWithTimeout(Callable<T> task, ToolDefinitionSource source) {
+        String sourceName = source.getClass().getSimpleName();
+        Duration timeout = source.sourceTimeout();
         Future<T> future = sourceExecutor.submit(task);
         try {
-            return future.get(SOURCE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             future.cancel(true);
-            log.error("[{}] {} timed out after {}s", sourceName, operation, SOURCE_TIMEOUT.toSeconds());
+            log.error("[{}] Timed out after {}s", sourceName, timeout.toSeconds());
             return null;
         } catch (ExecutionException e) {
             throw new RuntimeException(e.getCause());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("[{}] {} was interrupted", sourceName, operation);
+            log.error("[{}] Interrupted", sourceName);
             return null;
         }
     }

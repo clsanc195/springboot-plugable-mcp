@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -28,6 +29,21 @@ public class SecondaryJdbcToolDefinitionSource implements ToolDefinitionSource {
     public SecondaryJdbcToolDefinitionSource(
             @Qualifier("secondary-jdbcTemplate") JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Override
+    public Duration refreshInterval() {
+        return Duration.ofMinutes(10);
+    }
+
+    @Override
+    public Duration sourceTimeout() {
+        return Duration.ofSeconds(60);
+    }
+
+    @Override
+    public int maxRetryAttempts() {
+        return 3;
     }
 
     @Override

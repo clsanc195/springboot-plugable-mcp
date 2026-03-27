@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
@@ -55,6 +56,21 @@ public class JdbcToolDefinitionSource implements ToolDefinitionSource {
                         rs.getString("executor_config")
                 ),
                 serverId);
+    }
+
+    @Override
+    public Duration refreshInterval() {
+        return Duration.ofMinutes(5);
+    }
+
+    @Override
+    public Duration sourceTimeout() {
+        return Duration.ofSeconds(15);
+    }
+
+    @Override
+    public int maxRetryAttempts() {
+        return 5;
     }
 
     @Override

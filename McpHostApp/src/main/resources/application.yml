@@ -32,6 +32,3 @@ spring-pluggable-mcp:
       username: ${SECONDARY_DB_USERNAME:postgres}
       password: ${SECONDARY_DB_PASSWORD:postgres}
       driver-class-name: ${SECONDARY_DB_DRIVER:org.postgresql.Driver}
-  refresh:
-    enabled: true
-    interval: 5m

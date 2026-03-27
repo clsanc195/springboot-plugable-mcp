@@ -7,8 +7,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Tracks the current state of dynamic tool loading. Populated by the
- * {@link DynamicToolLoader} implementation and read by the Actuator endpoint.
+ * Tracks the current state of all tool loading — both static (@Tool beans)
+ * and dynamic (ToolDefinitionSource). Read by the Actuator endpoint.
  */
 public class DynamicToolStatus {
 
