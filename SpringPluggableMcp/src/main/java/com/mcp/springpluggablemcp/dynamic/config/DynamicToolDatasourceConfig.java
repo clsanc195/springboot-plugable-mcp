@@ -34,11 +34,11 @@ public class DynamicToolDatasourceConfig {
     @Bean
     @ConditionalOnMissingBean(DynamicToolLoader.class)
     public DynamicToolLoader dynamicToolLoader(
-            ToolDefinitionSource source,
+            List<ToolDefinitionSource> sources,
             ToolExecutionStrategyRegistry strategyRegistry,
             McpSyncServer mcpSyncServer,
             DynamicToolProperties properties,
             TaskScheduler taskScheduler) {
-        return new DefaultDynamicToolLoader(source, strategyRegistry, mcpSyncServer, properties, taskScheduler);
+        return new DefaultDynamicToolLoader(sources, strategyRegistry, mcpSyncServer, properties, taskScheduler);
     }
 }

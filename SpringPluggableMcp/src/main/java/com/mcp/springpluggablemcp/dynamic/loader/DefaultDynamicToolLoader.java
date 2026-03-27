@@ -13,6 +13,8 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.TaskScheduler;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,22 +22,22 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultDynamicToolLoader.class);
 
-    private final ToolDefinitionSource source;
+    private final List<ToolDefinitionSource> sources;
     private final ToolExecutionStrategyRegistry strategyRegistry;
     private final McpSyncServer mcpSyncServer;
     private final DynamicToolProperties properties;
     private final TaskScheduler taskScheduler;
 
     private final Set<String> registeredTools = ConcurrentHashMap.newKeySet();
-    private volatile Instant lastReadTime;
-    private volatile boolean initialLoadSucceeded = false;
+    private final Map<String, Instant> lastReadTimes = new ConcurrentHashMap<>();
+    private final Set<String> sourcesWithSuccessfulInitialLoad = ConcurrentHashMap.newKeySet();
 
-    public DefaultDynamicToolLoader(ToolDefinitionSource source,
+    public DefaultDynamicToolLoader(List<ToolDefinitionSource> sources,
                                     ToolExecutionStrategyRegistry strategyRegistry,
                                     McpSyncServer mcpSyncServer,
                                     DynamicToolProperties properties,
                                     TaskScheduler taskScheduler) {
-        this.source = source;
+        this.sources = sources;
         this.strategyRegistry = strategyRegistry;
         this.mcpSyncServer = mcpSyncServer;
         this.properties = properties;
@@ -45,15 +47,8 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader {
     @Override
     @EventListener(ApplicationReadyEvent.class)
     public void onStartup() {
-        try {
-            lastReadTime = Instant.now();
-            var records = source.loadAll();
-            log.info("Loaded {} dynamic tool definitions from source", records.size());
-            records.forEach(this::registerTool);
-            initialLoadSucceeded = true;
-        } catch (Exception e) {
-            log.warn("Dynamic tools source is not available at startup. "
-                    + "Tools will be loaded on the next refresh cycle. Cause: {}", e.getMessage());
+        for (ToolDefinitionSource source : sources) {
+            loadAllFromSource(source);
         }
 
         if (properties.refresh() != null && properties.refresh().enabled()) {
@@ -63,46 +58,69 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader {
         }
     }
 
-    private void refreshTools() {
+    private void loadAllFromSource(ToolDefinitionSource source) {
+        String sourceName = source.getClass().getSimpleName();
         try {
-            if (!initialLoadSucceeded) {
-                log.info("Retrying initial full load of dynamic tools...");
-                lastReadTime = Instant.now();
-                var records = source.loadAll();
-                log.info("Loaded {} dynamic tool definitions from source", records.size());
-                records.forEach(this::registerTool);
-                initialLoadSucceeded = true;
-                return;
-            }
-
-            var since = lastReadTime;
-            lastReadTime = Instant.now();
-
-            var deltas = source.loadSince(since);
-            if (deltas.isEmpty()) {
-                log.debug("No new dynamic tool definitions since {}", since);
-                return;
-            }
-
-            log.info("Found {} new/updated dynamic tool definitions", deltas.size());
-            for (var record : deltas) {
-                if (registeredTools.contains(record.name())) {
-                    mcpSyncServer.removeTool(record.name());
-                    log.info("Removed outdated tool for re-registration: {}", record.name());
-                }
-                registerTool(record);
-            }
+            lastReadTimes.put(sourceName, Instant.now());
+            var records = source.loadAll();
+            log.info("[{}] Loaded {} dynamic tool definitions", sourceName, records.size());
+            records.forEach(record -> registerTool(record, sourceName));
+            sourcesWithSuccessfulInitialLoad.add(sourceName);
         } catch (Exception e) {
-            log.error("Failed to refresh dynamic tools: {}", e.getMessage());
+            log.warn("[{}] Failed to load tools at startup. Will retry on next refresh cycle. Cause: {}",
+                    sourceName, e.getMessage());
         }
     }
 
-    private void registerTool(DynamicToolRecord record) {
-        var strategy = strategyRegistry.resolve(record.executorType());
-        var callback = new DynamicToolCallback(record, strategy);
-        var spec = McpToolUtils.toSyncToolSpecification(callback);
-        mcpSyncServer.addTool(spec);
-        registeredTools.add(record.name());
-        log.info("Registered dynamic tool: {} (executor: {})", record.name(), record.executorType());
+    private void refreshTools() {
+        for (ToolDefinitionSource source : sources) {
+            refreshFromSource(source);
+        }
+    }
+
+    private void refreshFromSource(ToolDefinitionSource source) {
+        String sourceName = source.getClass().getSimpleName();
+        try {
+            if (!sourcesWithSuccessfulInitialLoad.contains(sourceName)) {
+                log.info("[{}] Retrying initial full load...", sourceName);
+                loadAllFromSource(source);
+                return;
+            }
+
+            var since = lastReadTimes.getOrDefault(sourceName, Instant.now());
+            lastReadTimes.put(sourceName, Instant.now());
+
+            var deltas = source.loadSince(since);
+            if (deltas.isEmpty()) {
+                log.debug("[{}] No new tool definitions since {}", sourceName, since);
+                return;
+            }
+
+            log.info("[{}] Found {} new/updated tool definitions", sourceName, deltas.size());
+            for (var record : deltas) {
+                if (registeredTools.contains(record.name())) {
+                    mcpSyncServer.removeTool(record.name());
+                    log.info("[{}] Removed outdated tool for re-registration: {}", sourceName, record.name());
+                }
+                registerTool(record, sourceName);
+            }
+        } catch (Exception e) {
+            log.error("[{}] Failed to refresh tools: {}", sourceName, e.getMessage());
+        }
+    }
+
+    private void registerTool(DynamicToolRecord record, String sourceName) {
+        try {
+            var strategy = strategyRegistry.resolve(record.executorType());
+            var callback = new DynamicToolCallback(record, strategy);
+            var spec = McpToolUtils.toSyncToolSpecification(callback);
+            mcpSyncServer.addTool(spec);
+            registeredTools.add(record.name());
+            log.info("[{}] Registered dynamic tool: {} (executor: {})",
+                    sourceName, record.name(), record.executorType());
+        } catch (Exception e) {
+            log.error("[{}] Failed to register tool '{}': {}",
+                    sourceName, record.name(), e.getMessage());
+        }
     }
 }
