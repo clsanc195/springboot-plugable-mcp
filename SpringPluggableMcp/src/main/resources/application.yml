@@ -1,0 +1,14 @@
+spring:
+  ai:
+    mcp:
+      server:
+        name: spring-pluggable-mcp
+        version: 0.0.1
+        type: SYNC
+        protocol: STREAMABLE
+        streamable-http:
+          mcp-endpoint: /mcp
+
+dynamic-tools:
+  refresh:
+    enabled: false

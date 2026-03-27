@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:mvnrepository.com)",
+      "Bash(export JAVA_HOME=/Users/carlos/Library/Java/JavaVirtualMachines/ms-21.0.10/Contents/Home)",
+      "Bash(timeout 20 /opt/homebrew/bin/mvn spring-boot:run -q)",
+      "Bash(while read:*)",
+      "Bash(do echo:*)",
+      "Bash(jar tf:*)",
+      "Bash(done)",
+      "Bash(/opt/homebrew/bin/mvn -f /Users/carlos/JavaProjects/SpringPluggableMcp/pom.xml compile -q)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8950/mcp -X POST -H \"Content-Type: application/json\" -H \"Accept: application/json\" -d '{\"\"jsonrpc\"\":\"\"2.0\"\",\"\"id\"\":1,\"\"method\"\":\"\"initialize\"\",\"\"params\"\":{\"\"protocolVersion\"\":\"\"2025-03-26\"\",\"\"capabilities\"\":{},\"\"clientInfo\"\":{\"\"name\"\":\"\"curl-test\"\",\"\"version\"\":\"\"1.0.0\"\"}}}')",
+      "Bash(mvn:*)",
+      "Bash(xargs kill:*)"
+    ]
+  }
+}

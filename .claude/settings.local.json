@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose:*)",
+      "Bash(docker volume:*)",
+      "Bash(curl:*)",
+      "Bash(docker exec:*)",
+      "Bash(pkill -f \"mcp-inspector\")",
+      "Bash(pkill -f \"@modelcontextprotocol/inspector\")"
+    ]
+  }
+}

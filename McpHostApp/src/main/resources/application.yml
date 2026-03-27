@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: mcp-host-app
+  ai:
+    mcp:
+      server:
+        name: mcp-host-app
+        version: 1.0.0
+        type: SYNC
+        protocol: STREAMABLE
+        streamable-http:
+          mcp-endpoint: /mcp
+
+dynamic-tools:
+  jdbc:
+    datasource:
+      url: ${DYNAMIC_TOOLS_DB_URL:jdbc:postgresql://localhost:5432/mcp_tools}
+      username: ${DYNAMIC_TOOLS_DB_USERNAME:postgres}
+      password: ${DYNAMIC_TOOLS_DB_PASSWORD:postgres}
+      driver-class-name: ${DYNAMIC_TOOLS_DB_DRIVER:org.postgresql.Driver}
+  refresh:
+    enabled: true
+    interval: 5m
