@@ -55,9 +55,22 @@ public class DefaultDynamicToolLoader implements DynamicToolLoader, DisposableBe
     @Override
     @EventListener(ApplicationReadyEvent.class)
     public void onStartup() {
-        for (ToolDefinitionSource source : sources) {
-            loadAllFromSource(source);
-            scheduleRefresh(source);
+        // Load all sources concurrently
+        var futures = sources.stream()
+                .map(source -> sourceExecutor.submit(() -> {
+                    loadAllFromSource(source);
+                    return source;
+                }))
+                .toList();
+
+        // Wait for all to complete, then schedule refresh for each
+        for (var future : futures) {
+            try {
+                var source = future.get();
+                scheduleRefresh(source);
+            } catch (Exception e) {
+                log.error("Unexpected error during parallel source loading: {}", e.getMessage());
+            }
         }
     }
 

@@ -224,6 +224,38 @@ spring:
 - **Thread safety** -- tool registration uses a `ReentrantLock` to prevent race conditions
 - **Clean shutdown** -- the loader's `ExecutorService` is shut down via `DisposableBean` on application stop
 
+## Extending the Library
+
+If you need to modify or extend the library itself, here's where to look:
+
+### Adding new YAML properties
+
+`DynamicToolProperties.java` -- the single `@ConfigurationProperties` record bound to `spring-pluggable-mcp.*`. Add new fields to this record and they become available in YAML immediately. If the property is JDBC-specific, consider whether it belongs here or as a new field on the `NamedDatasource` record inside it.
+
+### Adding new per-source behavior
+
+`ToolDefinitionSource.java` -- add a new `default` method to the interface (e.g., `default boolean supportsDisable() { return false; }`). Existing sources won't break. The `DefaultDynamicToolLoader` can then read it and act accordingly.
+
+### Changing how tools are loaded and registered
+
+`DefaultDynamicToolLoader.java` -- the main orchestrator. Controls startup loading, per-source refresh scheduling, retry logic, timeout handling, and tool registration with the MCP server. This is the class to modify if you need to change loading behavior.
+
+### Changing how named datasources are created
+
+`DynamicToolJdbcConfig.java` -- a `BeanDefinitionRegistryPostProcessor` that reads `spring-pluggable-mcp.datasources` from the environment and registers `DataSource` + `JdbcTemplate` beans dynamically. To support a new datasource type (e.g., connection pools, read replicas), modify the bean creation logic here.
+
+### Adding new Actuator data
+
+`DynamicToolStatus.java` -- the shared state object. Add new fields or records here. `McpToolsEndpoint.java` reads from it and exposes it at `/actuator/mcptools`.
+
+### Adding new bean types to auto-configuration
+
+`DynamicToolDatasourceConfig.java` -- registers core beans (`ToolExecutionStrategyRegistry`, `DynamicToolLoader`, `DynamicToolStatus`) with `@ConditionalOnMissingBean`. Add new library-level beans here following the same pattern.
+
+### Changing how `@Tool` beans are discovered
+
+`McpToolConfig.java` -- scans the application context for beans with `@Tool`-annotated methods using reflection. If you need to support additional annotations or filter by package, modify the scanning logic here.
+
 ## Project Structure
 
 ```
