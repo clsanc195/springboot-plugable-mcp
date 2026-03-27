@@ -13,15 +13,20 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * Loads dynamic tool definitions from a PostgreSQL database using a
+ * two-table schema (tool_definitions + tool_registry) that supports
+ * per-server tool assignment.
+ */
 @Component
-public class CustomToolDefinitionSource implements ToolDefinitionSource {
+public class JdbcToolDefinitionSource implements ToolDefinitionSource {
 
-    private static final Logger log = LoggerFactory.getLogger(CustomToolDefinitionSource.class);
+    private static final Logger log = LoggerFactory.getLogger(JdbcToolDefinitionSource.class);
 
     private final JdbcTemplate jdbcTemplate;
     private final String serverId;
 
-    public CustomToolDefinitionSource(
+    public JdbcToolDefinitionSource(
             @Qualifier("dynamicToolsJdbcTemplate") JdbcTemplate jdbcTemplate,
             @Value("${spring.ai.mcp.server.name}") String serverId) {
         this.jdbcTemplate = jdbcTemplate;
