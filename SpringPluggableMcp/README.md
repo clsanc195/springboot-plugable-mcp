@@ -1,20 +1,21 @@
 # Spring Pluggable MCP
 
-A Spring Boot library that turns any Spring application into an MCP (Model Context Protocol) server with support for **static tools** (code-defined) and **dynamic tools** (loaded at runtime from external sources).
+A Spring Boot library that turns any Spring application into an MCP (Model Context Protocol) server with support for static tools (code-defined) and dynamic tools (loaded at runtime from any source).
 
 Built with Spring Boot 3.5, Spring AI 1.1.4, and the MCP Streamable HTTP transport.
 
 ## What This Is
 
-This is a **library**, not a standalone application. You add it as a dependency to your Spring Boot project (the "client"), and it gives you:
+This is a **library**, not a standalone application. You add it as a dependency to your Spring Boot project, and it gives you:
 
 - An MCP server endpoint at `/mcp` (Streamable HTTP)
 - Auto-discovery of `@Tool`-annotated beans from your application
 - A pluggable system for loading and executing dynamic tools from any source
-- Named JDBC datasource/JdbcTemplate bean registration from YAML configuration
+- Named JDBC datasource/JdbcTemplate bean registration from YAML
+- An Actuator endpoint at `/actuator/mcptools` showing all registered tools and source health
 - Every extension point follows the same pattern: **interface + default implementation + `@ConditionalOnMissingBean`**
 
-The library does **not** provide any `ToolDefinitionSource` implementations. Clients own all source implementations and inject the named JDBC beans they need.
+The library does **not** provide any `ToolDefinitionSource` or `ToolExecutionStrategy` implementations. Clients own all source and execution logic.
 
 ## Adding the Dependency
 
@@ -43,23 +44,21 @@ And a component scan that includes the library's package:
 public class YourApplication { }
 ```
 
-Note: exclude `DataSourceAutoConfiguration` since the library manages its own named datasources via `DynamicToolJdbcConfig`.
+Exclude `DataSourceAutoConfiguration` since the library manages its own named datasources.
 
 ## Extension Points
 
-Every component is replaceable. The library provides sensible defaults, but your application can override any of them by providing your own bean.
-
 | Extension Point | Interface | Default | What It Does |
 |---|---|---|---|
-| Tool loading source | `ToolDefinitionSource` | *(client provides these)* | Where dynamic tool definitions come from |
+| Tool loading source | `ToolDefinitionSource` | *(client provides)* | Where dynamic tool definitions come from |
 | Strategy resolution | `ToolExecutionStrategyRegistry` | `DefaultToolExecutionStrategyRegistry` | How `executorType` maps to a strategy bean |
-| Tool execution | `ToolExecutionStrategy` | *(client provides these)* | What happens when a tool is called |
+| Tool execution | `ToolExecutionStrategy` | *(client provides)* | What happens when a tool is called |
 | Loading lifecycle | `DynamicToolLoader` | `DefaultDynamicToolLoader` | When and how tools are loaded and refreshed |
 | Static tool discovery | `MethodToolCallbackProvider` | Auto-scans all `@Tool` beans | Which `@Tool` methods become MCP tools |
 
 ## Static Tools
 
-Any `@Component` with `@Tool`-annotated methods is automatically discovered and registered as an MCP tool. Works for beans in your application or in the library.
+Any `@Component` with `@Tool`-annotated methods is automatically discovered and registered as an MCP tool:
 
 ```java
 @Component
@@ -72,36 +71,58 @@ public class MyTools {
 }
 ```
 
-No registration code needed — the library finds it.
-
 ## Dynamic Tools
 
-Dynamic tools are defined outside your code (typically in a database) and loaded at runtime. Each tool definition includes:
+Dynamic tools are defined outside your code and loaded at runtime. Each tool is a `DynamicToolRecord` with:
 
-- `name`, `description`, `inputSchema` — exposed to MCP clients
-- `executorType` — routes to a `ToolExecutionStrategy` bean
-- `executorConfig` — per-tool configuration passed to the strategy at execution time
+- `name`, `description`, `inputSchema` -- exposed to MCP clients
+- `executorType` -- routes to a `ToolExecutionStrategy` bean
+- `executorConfig` -- per-tool configuration passed to the strategy
 
-### Configuration (Core)
+### ToolDefinitionSource
 
-```yaml
-spring-pluggable-mcp:
-  refresh:
-    enabled: false       # set true to poll for changes
-    interval: 5m         # polling interval
+Implement this interface as a `@Component` to load tools from any source. Multiple sources can coexist -- the loader calls each one independently.
+
+Each source controls its own behavior via default method overrides:
+
+| Method | Default | Purpose |
+|---|---|---|
+| `loadAll()` | *(required)* | Load all tool definitions |
+| `loadSince(Instant)` | empty list | Incremental refresh (opt-in) |
+| `refreshInterval()` | `null` (no refresh) | How often to reload |
+| `sourceTimeout()` | 30 seconds | Max wait for `loadAll`/`loadSince` before cancelling |
+| `maxRetryAttempts()` | 10 | How many times to retry if initial load fails |
+
+Example:
+
+```java
+@Component
+public class MyToolSource implements ToolDefinitionSource {
+
+    @Override
+    public List<DynamicToolRecord> loadAll() {
+        // load from database, REST API, file, etc.
+    }
+
+    @Override
+    public Duration refreshInterval() {
+        return Duration.ofMinutes(5);
+    }
+
+    @Override
+    public Duration sourceTimeout() {
+        return Duration.ofSeconds(15);
+    }
+}
 ```
 
-These are the only properties the library requires for the core loader. Everything else depends on which sources you implement.
-
-### Configuration (JDBC Named Sources)
-
-The library can register named `DataSource` and `JdbcTemplate` beans from YAML. Each entry in `spring-pluggable-mcp.datasources` becomes a pair of beans that clients inject by qualifier. The library does **not** create `ToolDefinitionSource` beans from this configuration — clients write their own source implementations.
+### Configuration
 
 ```yaml
 spring-pluggable-mcp:
   datasources:
     - name: primary
-      url: jdbc:postgresql://localhost:5432/mcp_tools
+      url: jdbc:postgresql://localhost:5432/my_db
       username: postgres
       password: postgres
       driver-class-name: org.postgresql.Driver
@@ -112,7 +133,7 @@ spring-pluggable-mcp:
       driver-class-name: org.postgresql.Driver
 ```
 
-This registers the following beans:
+Each entry registers a named `DataSource` and `JdbcTemplate` bean:
 
 | Bean Name | Type | Injected Via |
 |---|---|---|
@@ -121,13 +142,11 @@ This registers the following beans:
 | `secondary-dataSource` | `DataSource` | `@Qualifier("secondary-dataSource")` |
 | `secondary-jdbcTemplate` | `JdbcTemplate` | `@Qualifier("secondary-jdbcTemplate")` |
 
-Client source example:
+The library does **not** create `ToolDefinitionSource` beans from this configuration. Clients inject the named `JdbcTemplate` and write their own source logic:
 
 ```java
 @Component
 public class MyJdbcToolSource implements ToolDefinitionSource {
-
-    private final JdbcTemplate jdbcTemplate;
 
     public MyJdbcToolSource(@Qualifier("primary-jdbcTemplate") JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
@@ -136,20 +155,55 @@ public class MyJdbcToolSource implements ToolDefinitionSource {
     @Override
     public List<DynamicToolRecord> loadAll() {
         return jdbcTemplate.query("SELECT ...",
-                (rs, rowNum) -> new DynamicToolRecord(
-                        rs.getString("tool_name"),
-                        rs.getString("tool_description"),
-                        rs.getString("input_schema"),
-                        rs.getString("executor_type"),
-                        rs.getString("executor_config")
-                ));
+                (rs, rowNum) -> new DynamicToolRecord( ... ));
     }
 }
 ```
 
+A global refresh fallback is available for sources that don't override `refreshInterval()`:
+
+```yaml
+spring-pluggable-mcp:
+  refresh:
+    enabled: true
+    interval: 5m
+```
+
+## Actuator Endpoint
+
+The library provides an endpoint at `/actuator/mcptools` that shows all registered tools (static and dynamic) and the health of each source.
+
+Enable it in your application:
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,mcptools
+```
+
+Response:
+
+```json
+{
+  "totalTools": 16,
+  "tools": [
+    { "name": "ping", "executorType": "@Tool", "source": "HostTools", "registeredAt": "..." },
+    { "name": "echo_message", "executorType": "echo", "source": "JdbcToolDefinitionSource", "registeredAt": "..." }
+  ],
+  "sources": {
+    "JdbcToolDefinitionSource": { "state": "healthy", "toolCount": 8, "retryAttempts": 0 },
+    "InMemoryToolDefinitionSource": { "state": "healthy", "toolCount": 2, "retryAttempts": 0 }
+  }
+}
+```
+
+Source states: `healthy`, `retrying`, `gave_up`.
+
 ## Overriding Library Defaults
 
-The library ships an `application.yml` with MCP server identity defaults (`name: spring-pluggable-mcp`). Your client application's `application.yml` takes precedence — simply define your own:
+The library ships an `application.yml` with MCP server identity defaults. Your client's `application.yml` takes precedence:
 
 ```yaml
 spring:
@@ -160,54 +214,15 @@ spring:
         version: 2.0.0
 ```
 
-The library's values are only used if your application doesn't set them.
-
-## Multiple Tool Definition Sources
-
-The loader accepts `List<ToolDefinitionSource>` — all `@Component` beans implementing the interface are collected automatically. Each source loads independently and failures in one source don't affect others.
-
-```java
-@Component
-public class RestApiToolSource implements ToolDefinitionSource {
-    @Override
-    public List<DynamicToolRecord> loadAll() { /* fetch from API */ }
-}
-
-@Component
-public class FileToolSource implements ToolDefinitionSource {
-    @Override
-    public List<DynamicToolRecord> loadAll() { /* read from YAML file */ }
-}
-```
-
-Both sources contribute tools to the same MCP server. If a source fails at startup, it retries automatically on the next refresh cycle (up to 10 attempts with logging on each retry).
-
 ## Resilience
 
 - **Source failures at startup** are logged and retried on the next refresh cycle
-- **Individual tool registration failures** are isolated — one bad tool doesn't block others
-- **Retry limit** — sources that fail repeatedly give up after 10 attempts to avoid log spam
-- **Tool name collisions** across sources are logged with a warning identifying both sources before overriding
-- **Thread safety** — tool registration uses a `ReentrantLock` to prevent race conditions during concurrent refresh and MCP request handling
-- **McpToolConfig logging** — bean resolution errors during `@Tool` scanning are logged as warnings instead of silently swallowed
-
-## Showcase: CalculatorTools
-
-The library ships one sample `@Tool` bean as a reference:
-
-```java
-@Component
-public class CalculatorTools {
-
-    @Tool(name = "calculate", description = "Perform basic arithmetic")
-    public CalculationResult calculate(
-            @ToolParam(description = "First operand") double a,
-            @ToolParam(description = "Second operand") double b,
-            @ToolParam(description = "Operator: add, subtract, multiply, divide") String operator) {
-        return calculatorService.calculate(a, b, operator);
-    }
-}
-```
+- **Individual tool registration failures** are isolated -- one bad tool doesn't block others
+- **Retry limit** -- configurable per source via `maxRetryAttempts()`, defaults to 10
+- **Source timeout** -- configurable per source via `sourceTimeout()`, defaults to 30s. Hanging sources are cancelled without blocking others
+- **Tool name collisions** across sources are logged with a warning identifying both sources
+- **Thread safety** -- tool registration uses a `ReentrantLock` to prevent race conditions
+- **Clean shutdown** -- the loader's `ExecutorService` is shut down via `DisposableBean` on application stop
 
 ## Project Structure
 
@@ -216,23 +231,21 @@ src/main/java/com/mcp/springpluggablemcp/
 ├── SpringPluggableMcpApplication.java
 ├── config/
 │   └── McpToolConfig.java                    # Auto-discovers @Tool beans
-├── controller/
-│   └── CalculatorTools.java                  # Showcase @Tool
-├── service/
-│   └── CalculatorService.java                # Showcase service
 └── dynamic/
     ├── config/
-    │   ├── DynamicToolProperties.java        # Core properties (refresh + datasources)
-    │   ├── DynamicToolDatasourceConfig.java  # Core beans (loader, registry)
-    │   └── DynamicToolJdbcConfig.java        # Registers named DataSource/JdbcTemplate beans
+    │   ├── DynamicToolProperties.java        # Properties (refresh + datasources)
+    │   ├── DynamicToolDatasourceConfig.java  # Core beans (loader, registry, status)
+    │   ├── DynamicToolJdbcConfig.java        # Registers named DataSource/JdbcTemplate beans
+    │   └── McpToolsEndpoint.java             # Actuator endpoint at /actuator/mcptools
     ├── loader/
     │   ├── DynamicToolLoader.java            # Interface
-    │   ├── DefaultDynamicToolLoader.java     # Default: load on startup + refresh
-    │   └── ToolDefinitionSource.java         # Interface (client-implemented)
+    │   ├── DefaultDynamicToolLoader.java     # Default: load on startup + per-source refresh
+    │   ├── ToolDefinitionSource.java         # Interface (client implements)
+    │   └── DynamicToolStatus.java            # Tracks tools and source health
     ├── mapping/
     │   └── DynamicToolRecord.java            # Tool data model
     └── execution/
-        ├── ToolExecutionStrategy.java        # Interface
+        ├── ToolExecutionStrategy.java        # Interface (client implements)
         ├── ToolExecutionStrategyRegistry.java          # Interface
         ├── DefaultToolExecutionStrategyRegistry.java   # Default: auto-collect beans
         └── DynamicToolCallback.java          # Bridges strategy to MCP ToolCallback

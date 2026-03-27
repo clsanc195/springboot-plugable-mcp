@@ -1,13 +1,13 @@
-# Spring Boot MCP POC
+# Spring Boot MCP
 
-A proof of concept for building MCP (Model Context Protocol) servers with Spring Boot using a pluggable addon library.
+A framework for building MCP (Model Context Protocol) servers with Spring Boot. Consists of a reusable library and a reference client application.
 
 ## Projects
 
 | Project | Description |
 |---|---|
-| [SpringPluggableMcp](./SpringPluggableMcp) | Library that turns any Spring Boot app into an MCP server with static and dynamic tool support |
-| [McpHostApp](./McpHostApp) | Reference client application demonstrating how to use the library |
+| [SpringPluggableMcp](./SpringPluggableMcp) | Library that turns any Spring Boot app into an MCP server with pluggable tool loading and execution |
+| [McpHostApp](./McpHostApp) | Reference client demonstrating static tools, dynamic tool sources, and execution strategies |
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ A proof of concept for building MCP (Model Context Protocol) servers with Spring
 docker compose up -d --build
 ```
 
-This starts three services:
+This starts:
 
 | Service | Port | Description |
 |---|---|---|
@@ -23,19 +23,16 @@ This starts three services:
 | `mcp-server` | 8080 | MCP server (McpHostApp) |
 | `mcp-inspector` | 6274 | MCP Inspector UI |
 
-## Connecting
+## Endpoints
 
-### MCP Inspector
+| URL | Description |
+|---|---|
+| `http://localhost:8080/mcp` | MCP Streamable HTTP endpoint |
+| `http://localhost:8080/actuator/mcptools` | Tool dashboard (all registered tools + source health) |
+| `http://localhost:8080/health` | Health check |
+| `http://localhost:6274` | MCP Inspector (connect with Streamable HTTP to `http://mcp-server:8080/mcp`) |
 
-Open http://localhost:6274, select **Streamable HTTP**, enter `http://mcp-server:8080/mcp`, and click Connect.
-
-### MCP Endpoint
-
-```
-POST http://localhost:8080/mcp
-```
-
-### Database
+## Database
 
 ```
 Host:     localhost:5432
@@ -43,40 +40,6 @@ Database: mcp_tools
 User:     postgres
 Password: postgres
 ```
-
-## What Gets Registered
-
-### Static Tools (code-defined)
-
-| Tool | Description |
-|---|---|
-| `calculate` | Basic arithmetic |
-| `analyze_text` | Text statistics |
-| `transform_text` | Text transformations |
-| `get_current_time` | Current time in a timezone |
-| `ping` | Simple ping/pong |
-| `today_in_history` | Wikipedia "on this day" API |
-
-### Dynamic Tools (from InMemoryToolDefinitionSource)
-
-| Tool | Executor | Description |
-|---|---|---|
-| `server_info` | `echo` | Server information |
-| `random_number` | `echo` | Random number (demo) |
-
-### Dynamic Tools (from JdbcToolDefinitionSource / SecondaryJdbcToolDefinitionSource)
-
-| Tool | Executor | Source | Description |
-|---|---|---|---|
-| `echo_message` | `echo` | primary | Echo with prefix |
-| `lookup_user` | `echo` | primary | User lookup |
-| `greet_user` | `echo` | primary | Greeting generator |
-| `get_random_activity` | `http` | primary | Bored API random activity |
-| `get_github_user` | `http` | primary | GitHub user profile |
-| `create_pastebin` | `http` | primary | JSONPlaceholder post creation |
-| `idaas_get_user` | `http_idaas` | primary | IDaaS user fetch |
-| `idaas_create_post` | `http_idaas` | primary | IDaaS post creation |
-| `unrelated_tool` | `echo` | secondary | Loaded by secondary source (id=4) |
 
 ## Prerequisites
 
@@ -93,7 +56,7 @@ cd SpringPluggableMcp && mvn install -DskipTests
 cd ../McpHostApp && mvn spring-boot:run
 ```
 
-Requires a running PostgreSQL instance — use `docker compose up -d postgres` to start just the database.
+Requires a running PostgreSQL instance -- use `docker compose up -d postgres` to start just the database.
 
 ## Project Structure
 
@@ -104,6 +67,6 @@ Requires a running PostgreSQL instance — use `docker compose up -d postgres` t
 ├── db/
 │   └── init.sql                # Database schema and seed data
 ├── inspector-entrypoint.sh     # MCP Inspector startup patch
-├── SpringPluggableMcp/         # Library — extension points and defaults
-└── McpHostApp/                 # Client — tools, strategies, sources
+├── SpringPluggableMcp/         # Library
+└── McpHostApp/                 # Client
 ```
