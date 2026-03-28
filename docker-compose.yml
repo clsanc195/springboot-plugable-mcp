@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile
     container_name: mcp-server
     ports:
-      - "8080:8080"
+      - "8790:8790"
     environment:
       # Primary JDBC source
       PRIMARY_DB_URL: jdbc:postgresql://postgres:5432/mcp_tools
