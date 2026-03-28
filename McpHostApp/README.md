@@ -62,21 +62,21 @@ mcp/tools/
 ├── HostTools.java              # ping
 ├── TextTools.java              # analyze_text, transform_text
 ├── TimeTools.java              # get_current_time
-└── WikipediaTodayTools.java    # today_in_history (calls Wikipedia API)
+├── WikipediaTodayTools.java    # today_in_history (delegates to WikipediaClient)
+└── wikipedia/
+    └── WikipediaClient.java    # Wikipedia API client (RestClient, response parsing)
 ```
 
-Example -- a tool that calls an external API:
+Example -- a tool that delegates to an external API client:
 
 ```java
 @Component
 public class WikipediaTodayTools {
 
-    private final RestClient restClient;
+    private final WikipediaClient wikipediaClient;
 
-    public WikipediaTodayTools(ObjectMapper objectMapper) {
-        this.restClient = RestClient.builder()
-                .baseUrl("https://api.wikimedia.org/feed/v1/wikipedia/en")
-                .build();
+    public WikipediaTodayTools(WikipediaClient wikipediaClient) {
+        this.wikipediaClient = wikipediaClient;
     }
 
     @Tool(name = "today_in_history",
@@ -84,20 +84,23 @@ public class WikipediaTodayTools {
     public String todayInHistory(
             @ToolParam(description = "Month (1-12)") Integer month,
             @ToolParam(description = "Day (1-31)") Integer day) {
-        // calls Wikipedia API, parses response
+        // delegates to WikipediaClient for HTTP call and parsing
     }
 }
 ```
 
+The tool definition stays clean and focused. HTTP concerns (RestClient setup, response parsing) live in `WikipediaClient`.
+
 ## 2. Tool Definition Sources
 
-Sources tell the library where to find dynamic tool definitions. This app has three sources running side by side:
+Sources tell the library where to find dynamic tool definitions. This app has four sources running side by side:
 
 ```
 mcp/source/
 ├── JdbcToolDefinitionSource.java          # Loads from PostgreSQL via primary-jdbcTemplate
 ├── SecondaryJdbcToolDefinitionSource.java  # Loads from PostgreSQL via secondary-jdbcTemplate
-└── InMemoryToolDefinitionSource.java       # Loads from a hardcoded list
+├── InMemoryToolDefinitionSource.java       # Loads from a hardcoded list
+└── HttpToolDefinitionSource.java           # Loads from a remote HTTP API
 ```
 
 Each source independently configures its own refresh interval, timeout, and retry limit:
@@ -107,6 +110,7 @@ Each source independently configures its own refresh interval, timeout, and retr
 | `JdbcToolDefinitionSource` | 5 min | 15s | 5 |
 | `SecondaryJdbcToolDefinitionSource` | 10 min | 60s | 3 |
 | `InMemoryToolDefinitionSource` | none | 30s (default) | 10 (default) |
+| `HttpToolDefinitionSource` | 5 min | 15s | 3 |
 
 ### JdbcToolDefinitionSource
 
@@ -178,6 +182,57 @@ public class InMemoryToolDefinitionSource implements ToolDefinitionSource {
         );
     }
 }
+```
+
+### HttpToolDefinitionSource
+
+Loads tool definitions from a remote HTTP API. The client owns the full `RestClient` setup -- authentication, headers, interceptors, mTLS, etc. are all configured here, not in the library:
+
+```java
+@Component
+public class HttpToolDefinitionSource implements ToolDefinitionSource {
+
+    private final RestClient restClient;
+
+    public HttpToolDefinitionSource() {
+        this.restClient = RestClient.builder()
+                .baseUrl("https://internal-api.example.com/mcp/tools")
+                .defaultHeader("Accept", MediaType.APPLICATION_JSON_VALUE)
+                .defaultHeader("X-API-Key", "my-secret-key")
+                .build();
+    }
+
+    @Override
+    public List<DynamicToolRecord> loadAll() {
+        return restClient.get()
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+    }
+
+    @Override
+    public List<DynamicToolRecord> loadSince(Instant since) {
+        return restClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .queryParam("since", since.toString())
+                        .build())
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+    }
+}
+```
+
+The remote API is expected to return a JSON array matching the `DynamicToolRecord` structure:
+
+```json
+[
+  {
+    "name": "my_tool",
+    "description": "Does something useful",
+    "inputSchema": "{ ... JSON schema ... }",
+    "executorType": "http",
+    "executorConfig": "{ ... config ... }"
+  }
+]
 ```
 
 ### Configuration
@@ -330,6 +385,7 @@ src/main/java/com/mcp/mcphostapp/
     │   ├── IdaasHttpStrategy.java
     │   └── ToolExecutionUtils.java
     ├── source/
+    │   ├── HttpToolDefinitionSource.java
     │   ├── InMemoryToolDefinitionSource.java
     │   ├── JdbcToolDefinitionSource.java
     │   └── SecondaryJdbcToolDefinitionSource.java
@@ -337,5 +393,7 @@ src/main/java/com/mcp/mcphostapp/
         ├── HostTools.java
         ├── TextTools.java
         ├── TimeTools.java
-        └── WikipediaTodayTools.java
+        ├── WikipediaTodayTools.java
+        └── wikipedia/
+            └── WikipediaClient.java
 ```
