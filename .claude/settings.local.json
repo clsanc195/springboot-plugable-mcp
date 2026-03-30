@@ -7,7 +7,16 @@
       "Bash(docker exec:*)",
       "Bash(pkill -f \"mcp-inspector\")",
       "Bash(pkill -f \"@modelcontextprotocol/inspector\")",
-      "Bash(find /Users/carlos/JavaProjects/McpHostApp/src/test/java -type f -name *.java)"
+      "Bash(find /Users/carlos/JavaProjects/McpHostApp/src/test/java -type f -name *.java)",
+      "Bash(mvn dependency:tree)",
+      "Bash(jar tf:*)",
+      "Bash(grep -E \"\\\\.class$\")",
+      "Bash(grep -v '\\\\$')",
+      "Bash(grep -E \"\\(McpServerFeatures|McpSchema|McpSyncServer\\)$\")",
+      "Bash(javap:*)",
+      "Bash(mvn compile:*)",
+      "Bash(mvn test:*)",
+      "Bash(mvn install:*)"
     ]
   }
 }

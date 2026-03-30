@@ -1,0 +1,211 @@
+{
+  "info": {
+    "name": "Spring Pluggable MCP - Streamable HTTP",
+    "description": "Walks through the full MCP Streamable HTTP handshake and tool invocation flow.\n\n**Flow:**\n1. Initialize → get session ID\n2. Send initialized notification\n3. List available tools\n4. Call each tool\n\nAfter running \"1. Initialize\", copy the `Mcp-Session-Id` response header and set it as the `mcp_session_id` collection variable.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8950"
+    },
+    {
+      "key": "mcp_endpoint",
+      "value": "/mcp"
+    },
+    {
+      "key": "mcp_session_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Initialize",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const sessionId = pm.response.headers.get('Mcp-Session-Id');",
+              "if (sessionId) {",
+              "    pm.collectionVariables.set('mcp_session_id', sessionId);",
+              "    console.log('Session ID saved: ' + sessionId);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"protocolVersion\": \"2025-03-26\",\n    \"capabilities\": {},\n    \"clientInfo\": {\n      \"name\": \"postman-mcp-client\",\n      \"version\": \"1.0.0\"\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Initiates the MCP handshake. The server responds with its capabilities and a `Mcp-Session-Id` header that must be included in all subsequent requests.\n\nThe test script automatically saves the session ID to the collection variable."
+      }
+    },
+    {
+      "name": "2. Initialized (notification)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"notifications/initialized\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Confirms initialization is complete. This is a JSON-RPC notification (no `id` field), so the server responds with 202 Accepted and no body."
+      }
+    },
+    {
+      "name": "3. List Tools",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/list\",\n  \"params\": {}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Discovers all available MCP tools. Returns tool names, descriptions, and input schemas."
+      }
+    },
+    {
+      "name": "4a. Call Tool - get_current_time",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"get_current_time\",\n    \"arguments\": {\n      \"timezone\": \"America/New_York\"\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Calls the get_current_time tool with a timezone argument."
+      }
+    },
+    {
+      "name": "4b. Call Tool - calculate",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"calculate\",\n    \"arguments\": {\n      \"a\": 42,\n      \"b\": 8,\n      \"operator\": \"multiply\"\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Calls the calculate tool to multiply two numbers."
+      }
+    },
+    {
+      "name": "4c. Call Tool - analyze_text",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"analyze_text\",\n    \"arguments\": {\n      \"text\": \"Hello world. This is a test sentence. How many words?\"\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Calls the analyze_text tool to get character, word, line, and sentence counts."
+      }
+    },
+    {
+      "name": "4d. Call Tool - transform_text",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"transform_text\",\n    \"arguments\": {\n      \"text\": \"Hello World\",\n      \"operation\": \"uppercase\"\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Calls the transform_text tool to convert text to uppercase."
+      }
+    },
+    {
+      "name": "5. Ping",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"ping\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Simple health check. Server should respond with an empty result."
+      }
+    },
+    {
+      "name": "6. Close Session (DELETE)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" }
+        ],
+        "url": {
+          "raw": "{{base_url}}{{mcp_endpoint}}",
+          "host": ["{{base_url}}{{mcp_endpoint}}"]
+        },
+        "description": "Terminates the MCP session. The server invalidates the session ID."
+      }
+    }
+  ]
+}

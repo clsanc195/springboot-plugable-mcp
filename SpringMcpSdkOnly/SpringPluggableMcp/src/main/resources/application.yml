@@ -1,0 +1,7 @@
+spring-pluggable-mcp:
+  server:
+    name: spring-pluggable-mcp
+    version: 0.0.1
+    mcp-endpoint: /mcp
+  refresh:
+    enabled: false
